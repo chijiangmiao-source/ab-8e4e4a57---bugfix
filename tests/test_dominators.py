@@ -113,6 +113,38 @@ def _pre(n, edges):
     return pre
 
 
+def test_feedback_loop_with_bypasses():
+    # Main chain R->A->B->C->D->E->T, bypass edges R->C and A->E, and a
+    # local feedback loop E->D.  R=0 A=1 B=2 C=3 D=4 E=5 T=6.
+    edges = [
+        (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6),
+        (0, 3), (1, 5), (5, 4),
+    ]
+    n = 7
+    is_terminal = [False] * n
+    is_terminal[6] = True
+    r = compute_dominators(
+        n, _adj(n, edges), _pre(n, edges), 0,
+        is_terminal, [str(i) for i in range(n)],
+    )
+    # E is reachable via R->C->D->E and R->A->E, so its idom is the root --
+    # NOT its DFS-tree parent A, and NOT anyone inside the E->D loop.
+    assert r.idom[5] == 0
+    assert r.idom[3] == 0  # C bypassed by R->C
+    assert r.idom[4] == 0  # D bypassed through the E->D feedback edge
+    assert r.idom[1] == 0
+    assert r.idom[2] == 1  # B sits only on the R->A->B path
+    assert r.idom[6] == 5  # T hangs solely off E
+    counts = count_dominated_terminals(r)
+    # Only E is a single point of failure for T; A, C, D are all bypassed.
+    assert counts[5] == 1
+    assert counts[1] == 0
+    assert counts[3] == 0
+    assert counts[4] == 0
+    # Cross-check the whole idom vector against the deletion oracle.
+    assert_matches_bruteforce(edges, n)
+
+
 def test_serial_chain():
     n = 6
     edges = [(i, i + 1) for i in range(n - 1)]

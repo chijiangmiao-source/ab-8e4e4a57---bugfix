@@ -133,9 +133,6 @@ def compute_dominators(
     label = list(range(n))  # eval() candidate with minimum semi value
     idom = [-1] * n
     bucket: list[list[int]] = [[] for _ in range(n)]
-    compression_top = [-1] * n
-    compression_label = list(range(n))
-    compression_depth = [0] * n
 
     def compress(v: int) -> None:
         """Iterative path compression propagating minimum-semi labels.
@@ -143,28 +140,19 @@ def compute_dominators(
         Walk the ancestor chain to its top, then replay it in reverse
         updating labels -- the recursive LT ``compress`` unrolled, so a
         long DFS-tree chain never overflows Python's recursion limit.
+
+        The walk must always reach the *current* chain top (the ancestor
+        whose own ancestor is unset): ancestors are linked as the main
+        loop progresses, so any shortcut cached from an earlier call can
+        go stale and would freeze labels against an outdated tree.
         """
         path: list[int] = []
         a = ancestor[v]
-        cached_top = compression_top[v]
-        cached_label = compression_label[v]
-        path_depth = 0
-        while ancestor[a] != -1 and a != cached_top:
+        while ancestor[a] != -1:
             path.append(a)
             a = ancestor[a]
-            path_depth += 1
-        if ancestor[a] == -1:
-            compression_top[v] = a
-            compression_label[v] = label[a]
-            compression_depth[v] = path_depth
-        elif cached_top != -1:
-            a = cached_top
-            if (
-                compression_depth[v] >= path_depth
-                and semi[cached_label] < semi[label[a]]
-            ):
-                label[a] = cached_label
-            compression_depth[v] += path_depth
+        # Replay from the top down: every label is folded against
+        # already-compressed ancestors, then shortcut straight to the top.
         while path:
             u = path.pop()
             if semi[label[ancestor[u]]] < semi[label[u]]:

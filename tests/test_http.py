@@ -67,6 +67,38 @@ def test_audit_parallel_edges(client):
     assert critical == {"A": 1}
 
 
+def test_audit_feedback_loop_with_bypasses(client):
+    # Main chain R->A->B->C->D->E->T1, bypass edges R->C and A->E, and a
+    # local feedback loop E->D: A, C and D are bypassed, only E is critical.
+    resp = client.post("/api/audit", json={
+        "nodes": ["R", "A", "B", "C", "D", "E", "T1"],
+        "root": "R",
+        "terminals": ["T1"],
+        "edges": [
+            ["R", "A"], ["A", "B"], ["B", "C"], ["C", "D"], ["D", "E"],
+            ["E", "T1"],
+            ["R", "C"], ["A", "E"], ["E", "D"],
+        ],
+    })
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    idom = {d["node"]: d["immediate_dominator"] for d in body["dominators"]}
+    # E is reachable via R->C->D->E and R->A->E: its immediate dominator
+    # is the root, NOT its DFS-tree parent A.
+    assert idom["E"] == "R"
+    assert idom["C"] == "R"
+    assert idom["D"] == "R"
+    assert idom["T1"] == "E"
+    critical = {c["node"]: c["dominated_terminals"]
+                for c in body["critical_relays"]}
+    assert critical == {"E": 1}
+    # Response fields stay mutually consistent.
+    assert body["reachable_node_count"] == len(body["dominators"]) == 7
+    assert body["unreachable_terminals"] == []
+    names = [d["node"] for d in body["dominators"]]
+    assert names == sorted(names)
+
+
 def test_validation_error_is_locatable_and_has_no_partial_body(client):
     resp = client.post("/api/audit", json=payload(
         edges=[["R", "A"], ["GHOST", "T1"]]

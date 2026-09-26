@@ -5,9 +5,10 @@ Runs, in order:
   1. the full pytest suite (dominator core, validation, HTTP layer);
   2. an application build/import check -- the FastAPI app and its routes
      load cleanly and every route's handler is importable;
-  3. an HTTP smoke test against the running API service, covering the four
+  3. an HTTP smoke test against the running API service, covering the five
      required topologies: diamond bypass, serial critical point, parallel
-     edges and an unreachable terminal.
+     edges, an unreachable terminal and a feedback loop combined with
+     bypass edges.
 
 Exits 0 only if every stage passes; any failure exits non-zero so the
 container's status is a conclusive pass/fail.
@@ -170,6 +171,33 @@ def run_http_smoke() -> bool:
                 str(body.get("unreachable_terminals")))
     ok &= check("unreachable: TLOST has no dominator entry",
                 "TLOST" not in idom, str(sorted(idom)))
+
+    # --- Feedback loop with bypasses: main chain R->A->B->C->D->E->T1,
+    # bypass edges R->C and A->E, feedback edge E->D.  Bypassed relays
+    # must not be promoted to critical points.
+    status, body = http_post("/api/audit", {
+        "nodes": ["R", "A", "B", "C", "D", "E", "T1"],
+        "root": "R",
+        "terminals": ["T1"],
+        "edges": [
+            ["R", "A"], ["A", "B"], ["B", "C"], ["C", "D"], ["D", "E"],
+            ["E", "T1"],
+            ["R", "C"], ["A", "E"], ["E", "D"],
+        ],
+    })
+    idom = {d["node"]: d["immediate_dominator"] for d in body.get("dominators", [])}
+    critical = {c["node"]: c["dominated_terminals"]
+                for c in body.get("critical_relays", [])}
+    ok &= check("feedback: HTTP 200", status == 200, f"status={status} body={body}")
+    ok &= check("feedback: idom(E)=R despite A->E edge and E->D loop",
+                idom.get("E") == "R", f"idom(E)={idom.get('E')}")
+    ok &= check("feedback: bypassed A/C/D are NOT critical",
+                all(n not in critical for n in ("A", "C", "D")), str(critical))
+    ok &= check("feedback: E is the sole critical relay for T1",
+                critical == {"E": 1}, str(critical))
+    ok &= check("feedback: reachable count matches dominator entries",
+                body.get("reachable_node_count") == len(body.get("dominators", [])) == 7,
+                f"reachable={body.get('reachable_node_count')}")
 
     # --- Negative smoke: invalid input -> 422 locatable, no partial audit.
     status, body = http_post("/api/audit", {
