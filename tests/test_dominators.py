@@ -113,6 +113,41 @@ def _pre(n, edges):
     return pre
 
 
+def test_feedback_loop_with_bypasses():
+    # Main chain 0->1->2->3->4->5->6 (R..E->T) plus bypasses 0->3, 1->5
+    # and the feedback edge 5->4.  Every relay except 5 is bypassed, so
+    # the root is the immediate dominator of 3, 4 and 5, and 5 alone is
+    # critical for the terminal.
+    n = 7
+    edges = [
+        (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6),
+        (0, 3), (1, 5), (5, 4),
+    ]
+    is_terminal = [False] * n
+    is_terminal[6] = True
+    r = compute_dominators(
+        n, _adj(n, edges), _pre(n, edges), 0,
+        is_terminal, [str(i) for i in range(n)],
+    )
+    assert r.reachable == [True] * n
+    assert r.idom[1] == 0   # 1 hangs directly off the root
+    assert r.idom[2] == 1   # 2 only behind 1
+    assert r.idom[3] == 0   # bypassed via 0->3
+    assert r.idom[4] == 0   # bypassed via 0->3->4 and 1->5->4
+    assert r.idom[5] == 0   # bypassed via 1->5; feedback 5->4 changes nothing
+    assert r.idom[6] == 5   # terminal only behind 5
+
+    counts = count_dominated_terminals(r)
+    assert counts[0] == 1
+    assert counts[5] == 1
+    # Bypassed relays dominate no terminal.
+    assert counts[1] == 0
+    assert counts[3] == 0
+    assert counts[4] == 0
+
+    assert_matches_bruteforce(edges, n)
+
+
 def test_serial_chain():
     n = 6
     edges = [(i, i + 1) for i in range(n - 1)]

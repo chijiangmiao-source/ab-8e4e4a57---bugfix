@@ -5,9 +5,9 @@ Runs, in order:
   1. the full pytest suite (dominator core, validation, HTTP layer);
   2. an application build/import check -- the FastAPI app and its routes
      load cleanly and every route's handler is importable;
-  3. an HTTP smoke test against the running API service, covering the four
-     required topologies: diamond bypass, serial critical point, parallel
-     edges and an unreachable terminal.
+  3. an HTTP smoke test against the running API service, covering the
+     required topologies: diamond bypass, feedback loop with bypasses,
+     serial critical point, parallel edges and an unreachable terminal.
 
 Exits 0 only if every stage passes; any failure exits non-zero so the
 container's status is a conclusive pass/fail.
@@ -126,6 +126,36 @@ def run_http_smoke() -> bool:
                 "A" not in critical and "B" not in critical, str(critical))
     ok &= check("diamond: merge M is the sole critical relay",
                 critical == {"M": 1}, str(critical))
+
+    # --- Feedback loop + bypasses: main chain R->A->B->C->D->E->T1 with
+    # bypasses R->C, A->E and feedback edge E->D.  Only E is critical.
+    status, body = http_post("/api/audit", {
+        "nodes": ["R", "A", "B", "C", "D", "E", "T1"],
+        "root": "R",
+        "terminals": ["T1"],
+        "edges": [
+            ["R", "A"], ["A", "B"], ["B", "C"], ["C", "D"], ["D", "E"],
+            ["E", "T1"],
+            ["R", "C"], ["A", "E"], ["E", "D"],
+        ],
+    })
+    idom = {d["node"]: d["immediate_dominator"] for d in body.get("dominators", [])}
+    critical = {c["node"]: c["dominated_terminals"]
+                for c in body.get("critical_relays", [])}
+    ok &= check("feedback: HTTP 200", status == 200, f"status={status} body={body}")
+    ok &= check("feedback: all 7 nodes reachable",
+                body.get("reachable_node_count") == 7,
+                str(body.get("reachable_node_count")))
+    ok &= check("feedback: idom(E)=R (A->E bypass, feedback E->D changes nothing)",
+                idom.get("E") == "R", f"idom(E)={idom.get('E')}")
+    ok &= check("feedback: bypassed C/D also hang off R",
+                idom.get("C") == "R" and idom.get("D") == "R", str(idom))
+    ok &= check("feedback: idom(T1)=E", idom.get("T1") == "E", str(idom))
+    ok &= check("feedback: E is the sole critical relay (A/C/D bypassed)",
+                critical == {"E": 1}, str(critical))
+    ok &= check("feedback: no unreachable terminals",
+                body.get("unreachable_terminals") == [],
+                str(body.get("unreachable_terminals")))
 
     # --- Serial chain: every relay is a single point of failure.
     status, body = http_post("/api/audit", {

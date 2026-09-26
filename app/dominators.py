@@ -133,9 +133,6 @@ def compute_dominators(
     label = list(range(n))  # eval() candidate with minimum semi value
     idom = [-1] * n
     bucket: list[list[int]] = [[] for _ in range(n)]
-    compression_top = [-1] * n
-    compression_label = list(range(n))
-    compression_depth = [0] * n
 
     def compress(v: int) -> None:
         """Iterative path compression propagating minimum-semi labels.
@@ -143,33 +140,27 @@ def compute_dominators(
         Walk the ancestor chain to its top, then replay it in reverse
         updating labels -- the recursive LT ``compress`` unrolled, so a
         long DFS-tree chain never overflows Python's recursion limit.
+
+        The chain must be re-walked on every call: the forest keeps
+        growing while later vertices are processed, so ancestors linked
+        after a previous compression can still carry a smaller-semi
+        label.  Memoising a chain top across calls would serve stale
+        labels and corrupt ``eval`` (e.g. on feedback edges).
         """
         path: list[int] = []
-        a = ancestor[v]
-        cached_top = compression_top[v]
-        cached_label = compression_label[v]
-        path_depth = 0
-        while ancestor[a] != -1 and a != cached_top:
+        a = v
+        # ancestor[a] is never -1 here: eval() guarantees it for v, and
+        # the loop only advances to nodes the guard just proved linked.
+        while ancestor[ancestor[a]] != -1:
             path.append(a)
             a = ancestor[a]
-            path_depth += 1
-        if ancestor[a] == -1:
-            compression_top[v] = a
-            compression_label[v] = label[a]
-            compression_depth[v] = path_depth
-        elif cached_top != -1:
-            a = cached_top
-            if (
-                compression_depth[v] >= path_depth
-                and semi[cached_label] < semi[label[a]]
-            ):
-                label[a] = cached_label
-            compression_depth[v] += path_depth
+        # Replay from the chain top downward: when a node is visited its
+        # parent's label is already final, as in the recursive LT.
         while path:
             u = path.pop()
             if semi[label[ancestor[u]]] < semi[label[u]]:
                 label[u] = label[ancestor[u]]
-            ancestor[u] = a
+            ancestor[u] = ancestor[ancestor[u]]
 
     def eval(v: int) -> int:
         if ancestor[v] == -1:

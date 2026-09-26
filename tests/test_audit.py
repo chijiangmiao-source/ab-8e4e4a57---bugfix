@@ -38,6 +38,40 @@ def test_diamond_bypass_audit():
     assert critical == {"C": 1}
 
 
+def test_feedback_loop_with_bypasses_audit():
+    # Main chain R->A->B->C->D->E->T1 plus bypasses R->C, A->E and the
+    # feedback edge E->D; T2 is a stranded terminal.
+    payload = {
+        "nodes": ["R", "A", "B", "C", "D", "E", "T1", "T2"],
+        "root": "R",
+        "terminals": ["T1", "T2"],
+        "edges": [
+            ["R", "A"], ["A", "B"], ["B", "C"], ["C", "D"], ["D", "E"],
+            ["E", "T1"],
+            ["R", "C"], ["A", "E"], ["E", "D"],
+        ],
+    }
+    out = audit_graph(payload)
+    # Reachable set and dominator list agree, both sorted by identifier.
+    assert out["reachable_node_count"] == 7
+    names = [d["node"] for d in out["dominators"]]
+    assert names == sorted(names) == ["A", "B", "C", "D", "E", "R", "T1"]
+    idom = {d["node"]: d["immediate_dominator"] for d in out["dominators"]}
+    assert idom["R"] is None
+    assert idom["A"] == "R"
+    assert idom["B"] == "A"
+    assert idom["C"] == "R"   # R->C bypass
+    assert idom["D"] == "R"   # R->C->D and A->E->D bypasses
+    assert idom["E"] == "R"   # A->E bypass; feedback E->D changes nothing
+    assert idom["T1"] == "E"
+    # Only E is a single point of failure; A, C, D are all bypassed.
+    critical = {c["node"]: c["dominated_terminals"] for c in out["critical_relays"]}
+    assert critical == {"E": 1}
+    # Stranded terminal: reported, and absent from the dominator list.
+    assert out["unreachable_terminals"] == ["T2"]
+    assert "T2" not in idom
+
+
 def test_serial_critical_points():
     payload = base_payload(edges=[["R", "A"], ["A", "B"], ["B", "T1"]])
     out = audit_graph(payload)

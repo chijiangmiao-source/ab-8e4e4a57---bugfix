@@ -47,6 +47,31 @@ def test_audit_diamond(client):
     assert idom["C"] == "R"  # diamond bypass protects the merge point
 
 
+def test_audit_feedback_loop_with_bypasses(client):
+    resp = client.post("/api/audit", json={
+        "nodes": ["R", "A", "B", "C", "D", "E", "T1"],
+        "root": "R",
+        "terminals": ["T1"],
+        "edges": [
+            ["R", "A"], ["A", "B"], ["B", "C"], ["C", "D"], ["D", "E"],
+            ["E", "T1"],
+            ["R", "C"], ["A", "E"], ["E", "D"],
+        ],
+    })
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["reachable_node_count"] == 7
+    assert body["unreachable_terminals"] == []
+    idom = {d["node"]: d["immediate_dominator"] for d in body["dominators"]}
+    assert idom["E"] == "R"   # A->E bypass: E is not dominated by A
+    assert idom["C"] == "R" and idom["D"] == "R"
+    assert idom["T1"] == "E"
+    critical = {c["node"]: c["dominated_terminals"]
+                for c in body["critical_relays"]}
+    # Only E is critical; bypassed A, C and D must not be listed.
+    assert critical == {"E": 1}
+
+
 def test_audit_serial(client):
     resp = client.post("/api/audit", json=payload(
         edges=[["R", "A"], ["A", "B"], ["B", "T1"]]

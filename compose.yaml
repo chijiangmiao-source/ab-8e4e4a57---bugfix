@@ -25,6 +25,7 @@ services:
     environment:
       API_BASE_URL: http://api:8000
     # Runs the test suite, an application build/import check and an HTTP
-    # smoke test (diamond bypass, serial critical point, parallel edges,
-    # unreachable terminal), then exits with a conclusive status code.
+    # smoke test (diamond bypass, feedback loop with bypasses, serial
+    # critical point, parallel edges, unreachable terminal), then exits
+    # with a conclusive status code.
     command: ["python", "verify.py"]
